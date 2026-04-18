@@ -146,13 +146,10 @@ export class WhatsAppChannel implements Channel {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        const msg =
-          'WhatsApp authentication required. Run /setup in Claude Code.';
-        logger.error(msg);
-        exec(
-          `osascript -e 'display notification "${msg}" with title "NanoClaw" sound name "Basso"'`,
+        logger.warn(
+          'WhatsApp authentication required. Run /setup in Claude Code.',
         );
-        setTimeout(() => process.exit(1), 1000);
+        this.sock.end(undefined);
       }
 
       if (connection === 'close') {
@@ -228,12 +225,6 @@ export class WhatsAppChannel implements Channel {
 
     this.sock.ev.on('creds.update', saveCreds);
 
-    this.sock.ev.on('chats.phoneNumberShare', ({ lid, jid }) => {
-      const lidUser = lid?.split('@')[0].split(':')[0];
-      if (lidUser && jid) {
-        this.setLidPhoneMapping(lidUser, jid);
-      }
-    });
 
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const msg of messages) {
@@ -499,28 +490,17 @@ export class WhatsAppChannel implements Channel {
     }
 
     const metadata = await this.sock.groupMetadata(jid);
-    const participants = await Promise.all(
-      metadata.participants.map(async (participant) => ({
-        ...participant,
-        id: await this.translateJid(participant.id),
-      })),
-    );
-    const normalized = { ...metadata, participants };
-    const mappedCount = participants.filter(
-      (participant, index) =>
-        participant.id !== metadata.participants[index]?.id,
-    ).length;
 
     logger.info(
-      { jid, participantCount: participants.length, mappedCount },
-      'Prepared normalized group metadata for send',
+      { jid, participantCount: metadata.participants.length },
+      'Prepared group metadata for send',
     );
 
     this.groupMetadataCache.set(jid, {
-      metadata: normalized,
+      metadata,
       expiresAt: Date.now() + 60_000,
     });
-    return normalized;
+    return metadata;
   }
 
   private async flushOutgoingQueue(): Promise<void> {
@@ -549,4 +529,8 @@ export class WhatsAppChannel implements Channel {
   }
 }
 
-registerChannel('whatsapp', (opts: ChannelOpts) => new WhatsAppChannel(opts));
+if (fs.existsSync(path.join(STORE_DIR, 'auth', 'creds.json'))) {
+  registerChannel('whatsapp', (opts: ChannelOpts) => new WhatsAppChannel(opts));
+} else {
+  logger.info('WhatsApp auth not found — channel disabled. Run /setup to authenticate.');
+}

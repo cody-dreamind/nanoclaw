@@ -65,6 +65,7 @@ import { startSessionCleanup } from './session-cleanup.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { startWebhookServer } from './webhook.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -398,18 +399,16 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
-    }
-
     if (output.status === 'error') {
       // Detect stale/corrupt session — clear it so the next retry starts fresh.
       // The session .jsonl can go missing after a crash mid-write, manual
       // deletion, or disk-full. The existing backoff in group-queue.ts
       // handles the retry; we just need to remove the broken session ID.
+      // Note: check BEFORE saving newSessionId — the error output may echo back
+      // the broken session ID as newSessionId, which would create an infinite loop.
+      const candidateSession = sessionId || output.newSessionId;
       const isStaleSession =
-        sessionId &&
+        candidateSession &&
         output.error &&
         /no conversation found|ENOENT.*\.jsonl|session.*not found/i.test(
           output.error,
@@ -417,11 +416,14 @@ async function runAgent(
 
       if (isStaleSession) {
         logger.warn(
-          { group: group.name, staleSessionId: sessionId, error: output.error },
+          { group: group.name, staleSessionId: candidateSession, error: output.error },
           'Stale session detected — clearing for next retry',
         );
         delete sessions[group.folder];
         deleteSession(group.folder);
+      } else if (output.newSessionId) {
+        sessions[group.folder] = output.newSessionId;
+        setSession(group.folder, output.newSessionId);
       }
 
       logger.error(
@@ -429,6 +431,11 @@ async function runAgent(
         'Container agent error',
       );
       return 'error';
+    }
+
+    if (output.newSessionId) {
+      sessions[group.folder] = output.newSessionId;
+      setSession(group.folder, output.newSessionId);
     }
 
     return 'success';
@@ -693,6 +700,17 @@ async function main(): Promise<void> {
   if (channels.length === 0) {
     logger.fatal('No channels connected');
     process.exit(1);
+  }
+
+  // Start Graph webhook server for real-time email notifications
+  const mainGroupJid = Object.entries(registeredGroups).find(([, g]) => g.isMain)?.[0];
+  if (mainGroupJid) {
+    startWebhookServer({
+      groupJid: mainGroupJid,
+      onMessage: (msg) => {
+        storeMessage(msg);
+      },
+    });
   }
 
   // Start subsystems (independently of connection handler)

@@ -11,6 +11,11 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
+  GITHUB_TOKEN,
+  MS_CLIENT_ID,
+  MS_CLIENT_SECRET,
+  MS_REFRESH_TOKEN,
+  MS_TENANT_ID,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_API_KEY,
@@ -188,9 +193,11 @@ function buildVolumeMounts(
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  for (const sub of ['messages', 'tasks', 'input']) {
+    const dir = path.join(groupIpcDir, sub);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.chmodSync(dir, 0o777);
+  }
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
@@ -252,6 +259,18 @@ async function buildContainerArgs(
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
+
+  // GitHub token for git operations and gh CLI
+  if (GITHUB_TOKEN) {
+    args.push('-e', `GITHUB_TOKEN=${GITHUB_TOKEN}`);
+    args.push('-e', `GH_TOKEN=${GITHUB_TOKEN}`);
+  }
+
+  // Microsoft Graph API credentials
+  if (MS_CLIENT_ID) args.push('-e', `MS_CLIENT_ID=${MS_CLIENT_ID}`);
+  if (MS_TENANT_ID) args.push('-e', `MS_TENANT_ID=${MS_TENANT_ID}`);
+  if (MS_CLIENT_SECRET) args.push('-e', `MS_CLIENT_SECRET=${MS_CLIENT_SECRET}`);
+  if (MS_REFRESH_TOKEN) args.push('-e', `MS_REFRESH_TOKEN=${MS_REFRESH_TOKEN}`);
 
   // OneCLI gateway handles credential injection — containers never see real secrets.
   // The gateway intercepts HTTPS traffic and injects API keys or OAuth tokens.

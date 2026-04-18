@@ -11,6 +11,16 @@ const envConfig = readEnvFile([
   'ONECLI_URL',
   'ONECLI_API_KEY',
   'TZ',
+  'GITHUB_TOKEN',
+  'MS_CLIENT_ID',
+  'MS_TENANT_ID',
+  'MS_CLIENT_SECRET',
+  'MS_REFRESH_TOKEN',
+  'WEBHOOK_PORT',
+  'WEBHOOK_URL',
+  'WEBHOOK_CERT_PATH',
+  'WEBHOOK_KEY_PATH',
+  'WEBHOOK_CLIENT_STATE',
 ]);
 
 export const ASSISTANT_NAME =
@@ -55,6 +65,28 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
 export const ONECLI_URL = process.env.ONECLI_URL || envConfig.ONECLI_URL;
 export const ONECLI_API_KEY =
   process.env.ONECLI_API_KEY || envConfig.ONECLI_API_KEY;
+export const GITHUB_TOKEN =
+  process.env.GITHUB_TOKEN || envConfig.GITHUB_TOKEN;
+export const MS_CLIENT_ID =
+  process.env.MS_CLIENT_ID || envConfig.MS_CLIENT_ID;
+export const MS_TENANT_ID =
+  process.env.MS_TENANT_ID || envConfig.MS_TENANT_ID;
+export const MS_CLIENT_SECRET =
+  process.env.MS_CLIENT_SECRET || envConfig.MS_CLIENT_SECRET;
+export const MS_REFRESH_TOKEN =
+  process.env.MS_REFRESH_TOKEN || envConfig.MS_REFRESH_TOKEN;
+export const WEBHOOK_PORT = parseInt(
+  process.env.WEBHOOK_PORT || envConfig.WEBHOOK_PORT || '443',
+  10,
+);
+export const WEBHOOK_URL =
+  process.env.WEBHOOK_URL || envConfig.WEBHOOK_URL || 'https://cody.dreamind.cz/webhook/graph';
+export const WEBHOOK_CERT_PATH =
+  process.env.WEBHOOK_CERT_PATH || envConfig.WEBHOOK_CERT_PATH || '/etc/letsencrypt/live/cody.dreamind.cz/fullchain.pem';
+export const WEBHOOK_KEY_PATH =
+  process.env.WEBHOOK_KEY_PATH || envConfig.WEBHOOK_KEY_PATH || '/etc/letsencrypt/live/cody.dreamind.cz/privkey.pem';
+export const WEBHOOK_CLIENT_STATE =
+  process.env.WEBHOOK_CLIENT_STATE || envConfig.WEBHOOK_CLIENT_STATE || 'nanoclaw-graph-secret';
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,
