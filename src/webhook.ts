@@ -40,7 +40,8 @@ type OnEmailNotification = (message: NewMessage) => void;
 let onEmailNotification: OnEmailNotification | null = null;
 
 async function getAccessToken(): Promise<string> {
-  if (accessToken && Date.now() < accessTokenExpiry - 60_000) return accessToken;
+  if (accessToken && Date.now() < accessTokenExpiry - 60_000)
+    return accessToken;
 
   const res = await fetch(
     `https://login.microsoftonline.com/${MS_TENANT_ID}/oauth2/v2.0/token`,
@@ -56,21 +57,31 @@ async function getAccessToken(): Promise<string> {
       }),
     },
   );
-  const data = (await res.json()) as { access_token: string; expires_in: number };
-  if (!data.access_token) throw new Error(`Token refresh failed: ${JSON.stringify(data)}`);
+  const data = (await res.json()) as {
+    access_token: string;
+    expires_in: number;
+  };
+  if (!data.access_token)
+    throw new Error(`Token refresh failed: ${JSON.stringify(data)}`);
   accessToken = data.access_token;
   accessTokenExpiry = Date.now() + data.expires_in * 1000;
   return accessToken;
 }
 
-async function fetchEmailDetails(messageId: string): Promise<{ subject: string; from: string; preview: string } | null> {
+async function fetchEmailDetails(
+  messageId: string,
+): Promise<{ subject: string; from: string; preview: string } | null> {
   try {
     const token = await getAccessToken();
     const res = await fetch(
       `https://graph.microsoft.com/v1.0/me/messages/${messageId}?$select=subject,from,bodyPreview`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
-    const data = (await res.json()) as { subject?: string; from?: { emailAddress?: { address?: string } }; bodyPreview?: string };
+    const data = (await res.json()) as {
+      subject?: string;
+      from?: { emailAddress?: { address?: string } };
+      bodyPreview?: string;
+    };
     return {
       subject: data.subject || '(bez předmětu)',
       from: data.from?.emailAddress?.address || 'neznámý odesílatel',
@@ -82,7 +93,12 @@ async function fetchEmailDetails(messageId: string): Promise<{ subject: string; 
 }
 
 async function registerSubscription(): Promise<void> {
-  if (!MS_CLIENT_ID || !MS_TENANT_ID || !MS_CLIENT_SECRET || !MS_REFRESH_TOKEN) {
+  if (
+    !MS_CLIENT_ID ||
+    !MS_TENANT_ID ||
+    !MS_CLIENT_SECRET ||
+    !MS_REFRESH_TOKEN
+  ) {
     logger.warn('MS credentials missing — Graph webhook disabled');
     return;
   }
@@ -102,25 +118,41 @@ async function registerSubscription(): Promise<void> {
     let res: Response;
     if (subscriptionId) {
       // Renew existing
-      res = await fetch(`https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}`, {
-        method: 'PATCH',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expirationDateTime: expiry }),
-      });
+      res = await fetch(
+        `https://graph.microsoft.com/v1.0/subscriptions/${subscriptionId}`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ expirationDateTime: expiry }),
+        },
+      );
     } else {
       // Create new
       res = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(body),
       });
     }
 
-    const data = (await res.json()) as { id?: string; expirationDateTime?: string; error?: unknown };
+    const data = (await res.json()) as {
+      id?: string;
+      expirationDateTime?: string;
+      error?: unknown;
+    };
     if (data.id) {
       subscriptionId = data.id;
       subscriptionExpiry = new Date(data.expirationDateTime!).getTime();
-      logger.info({ subscriptionId, expiry: data.expirationDateTime }, 'Graph subscription active');
+      logger.info(
+        { subscriptionId, expiry: data.expirationDateTime },
+        'Graph subscription active',
+      );
     } else {
       logger.error({ data }, 'Graph subscription failed');
       subscriptionId = null;
@@ -138,7 +170,13 @@ function handleNotification(body: string, res: http.ServerResponse): void {
   res.writeHead(202);
   res.end();
 
-  let payload: { value?: Array<{ clientState?: string; resourceData?: { id?: string }; resource?: string }> };
+  let payload: {
+    value?: Array<{
+      clientState?: string;
+      resourceData?: { id?: string };
+      resource?: string;
+    }>;
+  };
   try {
     payload = JSON.parse(body);
   } catch {
@@ -168,7 +206,10 @@ function handleNotification(body: string, res: http.ServerResponse): void {
         is_bot_message: false,
       };
 
-      logger.info({ from: email?.from, subject: email?.subject }, 'Graph email notification received');
+      logger.info(
+        { from: email?.from, subject: email?.subject },
+        'Graph email notification received',
+      );
       if (onEmailNotification) {
         onEmailNotification(msg);
       } else {

@@ -225,7 +225,6 @@ export class WhatsAppChannel implements Channel {
 
     this.sock.ev.on('creds.update', saveCreds);
 
-
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
       for (const msg of messages) {
         try {
@@ -532,5 +531,7 @@ export class WhatsAppChannel implements Channel {
 if (fs.existsSync(path.join(STORE_DIR, 'auth', 'creds.json'))) {
   registerChannel('whatsapp', (opts: ChannelOpts) => new WhatsAppChannel(opts));
 } else {
-  logger.info('WhatsApp auth not found — channel disabled. Run /setup to authenticate.');
+  logger.info(
+    'WhatsApp auth not found — channel disabled. Run /setup to authenticate.',
+  );
 }

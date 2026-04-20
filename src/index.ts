@@ -416,7 +416,11 @@ async function runAgent(
 
       if (isStaleSession) {
         logger.warn(
-          { group: group.name, staleSessionId: candidateSession, error: output.error },
+          {
+            group: group.name,
+            staleSessionId: candidateSession,
+            error: output.error,
+          },
           'Stale session detected — clearing for next retry',
         );
         delete sessions[group.folder];
@@ -703,7 +707,9 @@ async function main(): Promise<void> {
   }
 
   // Start Graph webhook server for real-time email notifications
-  const mainGroupJid = Object.entries(registeredGroups).find(([, g]) => g.isMain)?.[0];
+  const mainGroupJid = Object.entries(registeredGroups).find(
+    ([, g]) => g.isMain,
+  )?.[0];
   if (mainGroupJid) {
     startWebhookServer({
       groupJid: mainGroupJid,
