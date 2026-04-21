@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 
 import { OneCLI } from '@onecli-sh/sdk';
 
@@ -66,6 +67,7 @@ import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { startWebhookServer } from './webhook.js';
+import { writeAuditEvent } from './audit-log.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -253,6 +255,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
+  writeAuditEvent('message_batch', {
+    chatJid,
+    groupName: group.name,
+    groupFolder: group.folder,
+    messageCount: missedMessages.length,
+    messages: missedMessages.map((msg) => ({
+      id: msg.id,
+      sender: msg.sender_name,
+      senderId: msg.sender,
+      timestamp: msg.timestamp,
+      content: msg.content,
+      replyToMessageId: msg.reply_to_message_id,
+      replyToSenderName: msg.reply_to_sender_name,
+      replyToContent: msg.reply_to_message_content,
+    })),
+    prompt,
+  });
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -294,6 +313,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
+      writeAuditEvent('agent_output', {
+        chatJid,
+        groupName: group.name,
+        groupFolder: group.folder,
+        rawResult: raw,
+        deliveredText: text,
+        sessionId: result.newSessionId,
+      });
       if (text) {
         await channel.sendMessage(chatJid, text);
         outputSentToUser = true;
@@ -308,6 +335,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     if (result.status === 'error') {
       hadError = true;
+      writeAuditEvent('agent_output_error', {
+        chatJid,
+        groupName: group.name,
+        groupFolder: group.folder,
+        error: result.error,
+        sessionId: result.newSessionId,
+      });
     }
   });
 
@@ -331,6 +365,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       { group: group.name },
       'Agent error, rolled back message cursor for retry',
     );
+    writeAuditEvent('message_batch_retry', {
+      chatJid,
+      groupName: group.name,
+      groupFolder: group.folder,
+      previousCursor,
+      restoredCursor: lastAgentTimestamp[chatJid],
+    });
     return false;
   }
 
@@ -383,6 +424,15 @@ async function runAgent(
       }
     : undefined;
 
+  writeAuditEvent('agent_run_start', {
+    chatJid,
+    groupName: group.name,
+    groupFolder: group.folder,
+    isMain,
+    sessionId,
+    prompt,
+  });
+
   try {
     const output = await runContainerAgent(
       group,
@@ -434,6 +484,14 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
+      writeAuditEvent('agent_run_end', {
+        chatJid,
+        groupName: group.name,
+        groupFolder: group.folder,
+        status: 'error',
+        sessionId: output.newSessionId || sessionId,
+        error: output.error,
+      });
       return 'error';
     }
 
@@ -442,9 +500,24 @@ async function runAgent(
       setSession(group.folder, output.newSessionId);
     }
 
+    writeAuditEvent('agent_run_end', {
+      chatJid,
+      groupName: group.name,
+      groupFolder: group.folder,
+      status: 'success',
+      sessionId: output.newSessionId || sessionId,
+    });
     return 'success';
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
+    writeAuditEvent('agent_run_end', {
+      chatJid,
+      groupName: group.name,
+      groupFolder: group.folder,
+      status: 'error',
+      sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return 'error';
   }
 }
@@ -584,6 +657,11 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  writeAuditEvent('service_start', {
+    assistantName: ASSISTANT_NAME,
+    defaultTrigger: DEFAULT_TRIGGER,
+    groupCount: Object.keys(registeredGroups).length,
+  });
 
   // Ensure OneCLI agents exist for all registered groups.
   // Recovers from missed creates (e.g. OneCLI was down at registration time).
@@ -596,6 +674,7 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    writeAuditEvent('service_shutdown', { signal });
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -711,10 +790,50 @@ async function main(): Promise<void> {
     ([, g]) => g.isMain,
   )?.[0];
   if (mainGroupJid) {
+    const enqueueDashboardPrompt = (text: string, actor: string | null) => {
+      const group = registeredGroups[mainGroupJid];
+      if (!group?.isMain) {
+        throw new Error('Main group is not available');
+      }
+
+      const messageId = `dashboard-${randomUUID()}`;
+      const timestamp = new Date().toISOString();
+      writeAuditEvent('dashboard_prompt_received', {
+        actor,
+        chatJid: mainGroupJid,
+        groupFolder: group.folder,
+        messageId,
+        text,
+      });
+      storeMessage({
+        id: messageId,
+        chat_jid: mainGroupJid,
+        sender: 'dashboard',
+        sender_name: 'Dashboard',
+        content: text,
+        timestamp,
+        is_from_me: false,
+        is_bot_message: false,
+      });
+      queue.enqueueMessageCheck(mainGroupJid);
+      writeAuditEvent('dashboard_prompt_enqueued', {
+        actor,
+        chatJid: mainGroupJid,
+        groupFolder: group.folder,
+        messageId,
+      });
+      return { messageId, chatJid: mainGroupJid, groupFolder: group.folder };
+    };
+
     startWebhookServer({
       groupJid: mainGroupJid,
       onMessage: (msg) => {
         storeMessage(msg);
+      },
+      dashboardApi: {
+        getRegisteredGroups: () => registeredGroups,
+        getQueueSnapshot: () => queue.getSnapshot(),
+        enqueuePrompt: enqueueDashboardPrompt,
       },
     });
   }

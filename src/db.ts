@@ -243,6 +243,17 @@ export interface ChatInfo {
   is_group: number;
 }
 
+export interface MessageRecord extends NewMessage {
+  is_bot_message?: boolean;
+}
+
+export interface TaskRunRecord extends TaskRunLog {
+  id: number;
+  group_folder: string;
+  chat_jid: string;
+  prompt: string;
+}
+
 /**
  * Get all known chats, ordered by most recent activity.
  */
@@ -256,6 +267,50 @@ export function getAllChats(): ChatInfo[] {
   `,
     )
     .all() as ChatInfo[];
+}
+
+export function getMessages(
+  opts: {
+    chatJid?: string;
+    sender?: string;
+    since?: string;
+    until?: string;
+    limit?: number;
+  } = {},
+): MessageRecord[] {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+
+  if (opts.chatJid) {
+    conditions.push('chat_jid = ?');
+    values.push(opts.chatJid);
+  }
+  if (opts.sender) {
+    conditions.push('sender = ?');
+    values.push(opts.sender);
+  }
+  if (opts.since) {
+    conditions.push('timestamp >= ?');
+    values.push(opts.since);
+  }
+  if (opts.until) {
+    conditions.push('timestamp <= ?');
+    values.push(opts.until);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = Math.max(1, Math.min(opts.limit || 200, 1000));
+  const sql = `
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me,
+           is_bot_message, reply_to_message_id, reply_to_message_content,
+           reply_to_sender_name
+    FROM messages
+    ${where}
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `;
+
+  return db.prepare(sql).all(...values, limit) as MessageRecord[];
 }
 
 /**
@@ -455,6 +510,55 @@ export function getAllTasks(): ScheduledTask[] {
   return db
     .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
     .all() as ScheduledTask[];
+}
+
+export function getTaskRunLogs(
+  opts: {
+    taskId?: string;
+    groupFolder?: string;
+    chatJid?: string;
+    since?: string;
+    until?: string;
+    limit?: number;
+  } = {},
+): TaskRunRecord[] {
+  const conditions: string[] = [];
+  const values: unknown[] = [];
+
+  if (opts.taskId) {
+    conditions.push('trl.task_id = ?');
+    values.push(opts.taskId);
+  }
+  if (opts.groupFolder) {
+    conditions.push('st.group_folder = ?');
+    values.push(opts.groupFolder);
+  }
+  if (opts.chatJid) {
+    conditions.push('st.chat_jid = ?');
+    values.push(opts.chatJid);
+  }
+  if (opts.since) {
+    conditions.push('trl.run_at >= ?');
+    values.push(opts.since);
+  }
+  if (opts.until) {
+    conditions.push('trl.run_at <= ?');
+    values.push(opts.until);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const limit = Math.max(1, Math.min(opts.limit || 200, 1000));
+  const sql = `
+    SELECT trl.id, trl.task_id, trl.run_at, trl.duration_ms, trl.status,
+           trl.result, trl.error, st.group_folder, st.chat_jid, st.prompt
+    FROM task_run_logs trl
+    JOIN scheduled_tasks st ON st.id = trl.task_id
+    ${where}
+    ORDER BY trl.run_at DESC
+    LIMIT ?
+  `;
+
+  return db.prepare(sql).all(...values, limit) as TaskRunRecord[];
 }
 
 export function updateTask(

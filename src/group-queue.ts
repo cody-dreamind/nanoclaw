@@ -27,6 +27,23 @@ interface GroupState {
   retryCount: number;
 }
 
+export interface GroupQueueSnapshot {
+  activeCount: number;
+  waitingGroups: string[];
+  groups: Array<{
+    groupJid: string;
+    active: boolean;
+    idleWaiting: boolean;
+    isTaskContainer: boolean;
+    runningTaskId: string | null;
+    pendingMessages: boolean;
+    pendingTaskCount: number;
+    containerName: string | null;
+    groupFolder: string | null;
+    retryCount: number;
+  }>;
+}
+
 export class GroupQueue {
   private groups = new Map<string, GroupState>();
   private activeCount = 0;
@@ -361,5 +378,24 @@ export class GroupQueue {
       { activeCount: this.activeCount, detachedContainers: activeContainers },
       'GroupQueue shutting down (containers detached, not killed)',
     );
+  }
+
+  getSnapshot(): GroupQueueSnapshot {
+    return {
+      activeCount: this.activeCount,
+      waitingGroups: [...this.waitingGroups],
+      groups: [...this.groups.entries()].map(([groupJid, state]) => ({
+        groupJid,
+        active: state.active,
+        idleWaiting: state.idleWaiting,
+        isTaskContainer: state.isTaskContainer,
+        runningTaskId: state.runningTaskId,
+        pendingMessages: state.pendingMessages,
+        pendingTaskCount: state.pendingTasks.length,
+        containerName: state.containerName,
+        groupFolder: state.groupFolder,
+        retryCount: state.retryCount,
+      })),
+    };
   }
 }

@@ -8,6 +8,8 @@ import { isValidTimezone } from './timezone.js';
 const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
+  'CODEX_FALLBACK_ENABLED',
+  'FORCE_CODEX_FALLBACK',
   'ONECLI_URL',
   'ONECLI_API_KEY',
   'TZ',
@@ -21,6 +23,7 @@ const envConfig = readEnvFile([
   'WEBHOOK_CERT_PATH',
   'WEBHOOK_KEY_PATH',
   'WEBHOOK_CLIENT_STATE',
+  'DASHBOARD_API_TOKEN',
 ]);
 
 export const ASSISTANT_NAME =
@@ -28,6 +31,12 @@ export const ASSISTANT_NAME =
 export const ASSISTANT_HAS_OWN_NUMBER =
   (process.env.ASSISTANT_HAS_OWN_NUMBER ||
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
+export const CODEX_FALLBACK_ENABLED =
+  (process.env.CODEX_FALLBACK_ENABLED || envConfig.CODEX_FALLBACK_ENABLED) !==
+  'false';
+export const FORCE_CODEX_FALLBACK =
+  (process.env.FORCE_CODEX_FALLBACK || envConfig.FORCE_CODEX_FALLBACK) ===
+  'true';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
@@ -92,6 +101,10 @@ export const WEBHOOK_CLIENT_STATE =
   process.env.WEBHOOK_CLIENT_STATE ||
   envConfig.WEBHOOK_CLIENT_STATE ||
   'nanoclaw-graph-secret';
+export const DASHBOARD_API_TOKEN =
+  process.env.DASHBOARD_API_TOKEN ||
+  envConfig.DASHBOARD_API_TOKEN ||
+  WEBHOOK_CLIENT_STATE;
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,
   parseInt(process.env.MAX_MESSAGES_PER_PROMPT || '10', 10) || 10,

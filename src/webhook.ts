@@ -5,11 +5,11 @@
 import http from 'http';
 import https from 'https';
 import fs from 'fs';
-import crypto from 'crypto';
 
 import { logger } from './logger.js';
 import { storeMessage } from './db.js';
 import {
+  DASHBOARD_API_TOKEN,
   MS_CLIENT_ID,
   MS_CLIENT_SECRET,
   MS_REFRESH_TOKEN,
@@ -21,6 +21,12 @@ import {
   WEBHOOK_CLIENT_STATE,
 } from './config.js';
 import { NewMessage } from './types.js';
+import { writeAuditEvent } from './audit-log.js';
+import { handleLogsRequest } from './log-viewer.js';
+import {
+  DashboardApiDeps,
+  handleDashboardApiRequest,
+} from './dashboard-api.js';
 
 const CERT_PATH = WEBHOOK_CERT_PATH;
 const KEY_PATH = WEBHOOK_KEY_PATH;
@@ -29,15 +35,37 @@ const CLIENT_STATE = WEBHOOK_CLIENT_STATE;
 // Subscription expiry — Graph allows max 4230 min for mail; renew at 80%
 const SUBSCRIPTION_TTL_MS = 4230 * 60 * 1000;
 const RENEW_AT_MS = SUBSCRIPTION_TTL_MS * 0.8;
+const EMAIL_DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
 
 let subscriptionId: string | null = null;
 let subscriptionExpiry: number = 0;
 let accessToken: string | null = null;
 let accessTokenExpiry: number = 0;
 let mainGroupJid: string | null = null;
+const recentEmailNotifications = new Map<string, number>();
 
 type OnEmailNotification = (message: NewMessage) => void;
 let onEmailNotification: OnEmailNotification | null = null;
+
+function pruneRecentEmailNotifications(now: number): void {
+  for (const [messageId, seenAt] of recentEmailNotifications.entries()) {
+    if (now - seenAt > EMAIL_DEDUP_TTL_MS) {
+      recentEmailNotifications.delete(messageId);
+    }
+  }
+}
+
+function shouldDeliverEmailNotification(messageId: string): boolean {
+  const now = Date.now();
+  pruneRecentEmailNotifications(now);
+
+  if (recentEmailNotifications.has(messageId)) {
+    return false;
+  }
+
+  recentEmailNotifications.set(messageId, now);
+  return true;
+}
 
 async function getAccessToken(): Promise<string> {
   if (accessToken && Date.now() < accessTokenExpiry - 60_000)
@@ -189,6 +217,16 @@ function handleNotification(body: string, res: http.ServerResponse): void {
     const messageId = notification.resourceData?.id;
     if (!messageId || !mainGroupJid) continue;
 
+    if (!shouldDeliverEmailNotification(messageId)) {
+      logger.info({ messageId }, 'Graph email notification deduplicated');
+      writeAuditEvent('email_notification_deduplicated', {
+        source: 'microsoft-graph',
+        messageId,
+        groupJid: mainGroupJid,
+      });
+      continue;
+    }
+
     // Fetch email details async and inject as a message
     fetchEmailDetails(messageId).then((email) => {
       const content = email
@@ -196,7 +234,7 @@ function handleNotification(body: string, res: http.ServerResponse): void {
         : `[Nový email] ID: ${messageId}`;
 
       const msg: NewMessage = {
-        id: `graph-${crypto.randomUUID()}`,
+        id: `graph-${messageId}`,
         chat_jid: mainGroupJid!,
         sender: 'email-notification',
         sender_name: 'Email',
@@ -210,6 +248,15 @@ function handleNotification(body: string, res: http.ServerResponse): void {
         { from: email?.from, subject: email?.subject },
         'Graph email notification received',
       );
+      writeAuditEvent('email_notification', {
+        source: 'microsoft-graph',
+        messageId,
+        groupJid: mainGroupJid,
+        from: email?.from,
+        subject: email?.subject,
+        preview: email?.preview,
+        deliveredContent: content,
+      });
       if (onEmailNotification) {
         onEmailNotification(msg);
       } else {
@@ -222,12 +269,22 @@ function handleNotification(body: string, res: http.ServerResponse): void {
 export function startWebhookServer(opts: {
   groupJid: string;
   onMessage?: OnEmailNotification;
+  dashboardApi?: DashboardApiDeps;
 }): void {
   mainGroupJid = opts.groupJid;
   onEmailNotification = opts.onMessage ?? null;
 
   const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
     const url = new URL(req.url || '/', `http://localhost`);
+
+    if (handleLogsRequest(req, res, url)) {
+      return;
+    }
+
+    if (opts.dashboardApi && url.pathname.startsWith('/dashboard-api/v1')) {
+      void handleDashboardApiRequest(req, res, url, opts.dashboardApi);
+      return;
+    }
 
     if (url.pathname !== '/webhook/graph') {
       res.writeHead(404);
@@ -267,7 +324,14 @@ export function startWebhookServer(opts: {
   }
 
   server.listen(WEBHOOK_PORT, () => {
-    logger.info({ port: WEBHOOK_PORT }, 'Graph webhook server listening');
+    logger.info(
+      {
+        port: WEBHOOK_PORT,
+        dashboardApiEnabled: Boolean(opts.dashboardApi),
+        dashboardApiTokenConfigured: Boolean(DASHBOARD_API_TOKEN),
+      },
+      'Graph webhook server listening',
+    );
   });
 
   // Register subscription after server is up
