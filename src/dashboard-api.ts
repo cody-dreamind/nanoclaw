@@ -104,7 +104,9 @@ function setSummary(run: DashboardRun, summary: string | null): void {
   run.summary = preview(summary, 400);
 }
 
-function normalizeMessageRecord(message: MessageRecord): Record<string, unknown> {
+function normalizeMessageRecord(
+  message: MessageRecord,
+): Record<string, unknown> {
   return {
     ...message,
     is_from_me: Boolean(message.is_from_me),
@@ -151,7 +153,8 @@ function buildRuns(events: AuditEvent[]): DashboardRun[] {
     const payload = event.payload || {};
     const groupFolder = getPayloadValue(payload, 'groupFolder');
     const chatJid =
-      getPayloadValue(payload, 'chatJid') || getPayloadValue(payload, 'groupJid');
+      getPayloadValue(payload, 'chatJid') ||
+      getPayloadValue(payload, 'groupJid');
     const containerName = getPayloadValue(payload, 'containerName');
 
     if (event.type === 'task_run_start') {
@@ -180,8 +183,9 @@ function buildRuns(events: AuditEvent[]): DashboardRun[] {
       if (isScheduledTask && groupFolder && chatJid) {
         const candidate = taskStartByGroup.get(`${groupFolder}:${chatJid}`);
         if (candidate) {
-          const delta =
-            Math.abs(new Date(event.ts).getTime() - new Date(candidate.ts).getTime());
+          const delta = Math.abs(
+            new Date(event.ts).getTime() - new Date(candidate.ts).getTime(),
+          );
           if (delta <= RUN_TASK_MATCH_WINDOW_MS) {
             run.taskId = candidate.taskId;
             if (!run.promptPreview) run.promptPreview = candidate.prompt;
@@ -240,7 +244,8 @@ function buildRuns(events: AuditEvent[]): DashboardRun[] {
       run.endedAt = event.ts;
       const status = getPayloadValue(payload, 'status');
       if (status === 'error') run.status = 'error';
-      if (status === 'success' && run.status === 'running') run.status = 'success';
+      if (status === 'success' && run.status === 'running')
+        run.status = 'success';
       run.error = getPayloadValue(payload, 'error') || run.error;
     }
   }
@@ -262,7 +267,9 @@ function buildRuns(events: AuditEvent[]): DashboardRun[] {
     }
   }
 
-  return [...runs.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return [...runs.values()].sort((a, b) =>
+    b.startedAt.localeCompare(a.startedAt),
+  );
 }
 
 function lastServiceStart(events: AuditEvent[]): AuditEvent | undefined {
@@ -288,8 +295,9 @@ export async function handleDashboardApiRequest(
       status: 'ok',
       lastServiceStart: serviceStart?.ts || null,
       activeContainerCount: snapshot.activeCount,
-      pendingMessageGroups: snapshot.groups.filter((group) => group.pendingMessages)
-        .length,
+      pendingMessageGroups: snapshot.groups.filter(
+        (group) => group.pendingMessages,
+      ).length,
       pendingTaskCount: snapshot.groups.reduce(
         (sum, group) => sum + group.pendingTaskCount,
         0,
@@ -301,10 +309,12 @@ export async function handleDashboardApiRequest(
   }
 
   if (url.pathname === '/dashboard-api/v1/groups') {
-    const groups = Object.entries(deps.getRegisteredGroups()).map(([jid, group]) => ({
-      jid,
-      ...group,
-    }));
+    const groups = Object.entries(deps.getRegisteredGroups()).map(
+      ([jid, group]) => ({
+        jid,
+        ...group,
+      }),
+    );
     json(res, 200, { groups });
     return true;
   }
